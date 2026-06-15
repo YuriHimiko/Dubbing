@@ -130,6 +130,20 @@ export default function App() {
         })
       });
 
+      const contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        if (contentType && contentType.includes("application/json")) {
+          const errData = await response.json();
+          throw new Error(errData.error || `Yêu cầu thất bại với mã trạng thái ${response.status}`);
+        } else {
+          throw new Error(`Máy chủ lồng tiếng đang bận hoặc khởi động lại (Mã: ${response.status}). Vui lòng bấm thử lại sau 2-3 giây nữa.`);
+        }
+      }
+
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Phản hồi từ máy chủ không hợp lệ (không phải định dạng JSON). Vui lòng thử lại.");
+      }
+
       const data = await response.json();
       if (!data.success) {
         throw new Error(data.error || "Không thể phân tích video YouTube.");
@@ -414,6 +428,20 @@ export default function App() {
         })
       });
 
+      const contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        if (contentType && contentType.includes("application/json")) {
+          const errData = await response.json();
+          throw new Error(errData.error || `Yêu cầu thất bại với mã trạng thái ${response.status}`);
+        } else {
+          throw new Error(`Máy chủ phân tích đang bận hoặc khởi động lại (Mã: ${response.status}). Vui lòng bấm thử lại sau 2-3 giây nữa.`);
+        }
+      }
+
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Phản hồi từ máy chủ không hợp lệ (không phải định dạng JSON). Vui lòng thử lại.");
+      }
+
       const data = await response.json();
       if (!data.success) {
         throw new Error(data.error || "Gặp sự cố giải bài lồng tiếng.");
@@ -467,6 +495,20 @@ export default function App() {
           voice: selectedVoice
         })
       });
+
+      const contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        if (contentType && contentType.includes("application/json")) {
+          const errData = await response.json();
+          throw new Error(errData.error || `Yêu cầu thất bại với mã trạng thái ${response.status}`);
+        } else {
+          throw new Error(`Máy chủ lồng tiếng đang bận hoặc khởi động lại (Mã: ${response.status}). Vui lòng bấm thử lại sau 2-3 giây nữa.`);
+        }
+      }
+
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Phản hồi từ máy chủ không hợp lệ (không phải định dạng JSON). Vui lòng thử lại.");
+      }
 
       const data = await response.json();
       if (!data.success) {
