@@ -1,0 +1,6 @@
+{
+  "name": "AI Video Auto Dubbing",
+  "description": "Phần mềm lồng tiếng tự động cho video bằng AI với nhiều ngôn ngữ và giọng đọc tự nhiên",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
