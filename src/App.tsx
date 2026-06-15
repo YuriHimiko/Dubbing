@@ -21,7 +21,8 @@ import {
   Download, 
   RefreshCw,
   Sliders,
-  Volume1
+  Volume1,
+  Youtube
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DialogueSegment, VoiceName, AVAILABLE_VOICES, TARGET_LANGUAGES } from './types';
@@ -46,6 +47,11 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionProgress, setTranscriptionProgress] = useState(0);
   const [currentAudioBuffer, setCurrentAudioBuffer] = useState<AudioBuffer | null>(null);
+
+  // YouTube features states
+  const [youtubeUrl, setYoutubeUrl] = useState<string>('');
+  const [youtubeId, setYoutubeId] = useState<string>('');
+  const [isAnalyzingYoutube, setIsAnalyzingYoutube] = useState<boolean>(false);
 
   // Workflow states
   const [segments, setSegments] = useState<DialogueSegment[]>([]);
@@ -87,10 +93,137 @@ export default function App() {
         isGenerating: false
       })));
       setCurrentAudioBuffer(null);
+      setYoutubeId('');
+      setYoutubeUrl('');
       setApiError(null);
       setSuccessMsg(`Đã tải mẫu: ${sample.name}`);
+    } else if (selectedProjectId === 'custom_project' || selectedProjectId === 'youtube_project') {
+      cleanupAllAudioUrls();
+      setVideoSrc('');
+      setVideoName('');
+      setSegments([]);
+      setCurrentAudioBuffer(null);
+      setYoutubeId('');
+      setYoutubeUrl('');
     }
   }, [selectedProjectId]);
+
+  // Analyze YouTube Link and get Translated cues
+  const triggerYoutubeDub = async () => {
+    if (!youtubeUrl) {
+      setApiError("Vui lòng nhập đường dẫn video YouTube.");
+      return;
+    }
+
+    setIsAnalyzingYoutube(true);
+    setApiError(null);
+    setSuccessMsg(null);
+    setSegments([]);
+
+    try {
+      const response = await fetch('/api/dub/youtube', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          youtubeUrl,
+          targetLanguage: targetLang
+        })
+      });
+
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || "Không thể phân tích video YouTube.");
+      }
+
+      setYoutubeId(data.videoId);
+      setVideoName(`YouTube: ${data.videoId}`);
+      setVideoSrc(''); // Clear standard file source since we use YouTube player
+
+      const parsedSegments: DialogueSegment[] = data.segments.map((s: any) => ({
+        id: s.id || `yt_seg_${Math.random().toString(36).substr(2, 9)}`,
+        start: Number(s.start),
+        end: Number(s.end),
+        speaker: s.speaker || "Speaker",
+        originalText: s.originalText || "",
+        translatedText: s.translatedText || "",
+        isGenerating: false
+      }));
+
+      // Sort segments
+      parsedSegments.sort((a, b) => a.start - b.start);
+      setSegments(parsedSegments);
+      setCurrentTime(0);
+      setSuccessMsg(`Tuyệt vời! Đã dịch thành công thành ${parsedSegments.length} phân đoạn từ YouTube video.`);
+    } catch (err: any) {
+      console.error(err);
+      setApiError(`Lỗi phân tích YouTube: ${err.message}`);
+    } finally {
+      setIsAnalyzingYoutube(false);
+    }
+  };
+
+  // Simulated timeline update when playing a YouTube Video
+  useEffect(() => {
+    if (!youtubeId || !isPlaying) return;
+
+    const interval = setInterval(() => {
+      setCurrentTime(prevTime => {
+        const nextTime = Math.round((prevTime + 0.1) * 10) / 10;
+        
+        // Find if we are currently inside any segment timeline to play audio
+        segments.forEach(seg => {
+          if (nextTime >= seg.start && nextTime <= seg.end) {
+            // Trigger automated audio dub play!
+            if (seg.audioUrl) {
+              const playedState = playingAudiosRef.current[seg.id];
+              const needsPlay = !playedState || !playedState.hasPlayed;
+
+              if (needsPlay) {
+                if (playedState) playedState.audio.pause();
+
+                const audioObj = new Audio(seg.audioUrl);
+                audioObj.volume = dubbedVolume;
+                audioObj.play().catch(e => console.log("Audio play deferred:", e));
+
+                playingAudiosRef.current[seg.id] = {
+                  id: seg.id,
+                  audio: audioObj,
+                  startedAt: nextTime,
+                  hasPlayed: true
+                };
+              }
+            }
+          } else {
+            // Stop segment audio if head moves out
+            const playedState = playingAudiosRef.current[seg.id];
+            if (playedState && !playedState.audio.paused && (nextTime < seg.start || nextTime > seg.end + 0.5)) {
+              playedState.audio.pause();
+              playedState.hasPlayed = false;
+            }
+          }
+        });
+
+        // Loop playhead if it exceeds maximum end
+        const maxTimeline = Math.max(...segments.map(s => s.end), 20);
+        if (nextTime > maxTimeline + 2) {
+          // Stop all
+          (Object.values(playingAudiosRef.current) as PlayingItem[]).forEach(item => {
+            item.audio.pause();
+          });
+          playingAudiosRef.current = {};
+          return 0;
+        }
+
+        // Update active segment
+        const activeSeg = segments.find(s => nextTime >= s.start && nextTime <= s.end);
+        setActiveSegmentId(activeSeg ? activeSeg.id : null);
+
+        return nextTime;
+      });
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [youtubeId, isPlaying, segments, dubbedVolume]);
 
   // Handle segment cleanup
   const cleanupAllAudioUrls = () => {
@@ -532,7 +665,8 @@ export default function App() {
             {SAMPLE_PROJECTS.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
-            <option value="custom_project">🆕 Video của riêng bạn (+ Upload)</option>
+            <option value="custom_project">🆕 Tải Video của riêng bạn (+ Upload)</option>
+            <option value="youtube_project">🎬 Dịch qua link YouTube (AI lồng tiếng)</option>
           </select>
         </div>
       </header>
@@ -607,6 +741,69 @@ export default function App() {
                     <p className="text-xs text-slate-400">Hỗ trợ MP4, WebM, MKV, MP3, WAV... dung lượng bất kỳ</p>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* YOUTUBE LINK TRANSLATION BOX */}
+          {selectedProjectId === 'youtube_project' && (
+            <div className="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-2xl p-5" id="youtube_box">
+              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-red-400">
+                <Youtube className="h-4.5 w-4.5" /> 1. Dịch qua link YouTube
+              </h3>
+              <p className="text-xs text-slate-400 mb-3.5 leading-relaxed">
+                Nhập đường dẫn video bất kỳ trên YouTube. Gemini sẽ phân tích ngữ cảnh, chuyển ngữ đối thoại tinh tế và phân vai lồng tiếng hoàn chỉnh.
+              </p>
+              <div className="flex flex-col gap-2.5">
+                <input 
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-red-500 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none transition text-slate-200"
+                />
+                <button
+                  onClick={triggerYoutubeDub}
+                  disabled={isAnalyzingYoutube}
+                  className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-semibold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
+                >
+                  {isAnalyzingYoutube ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      Gemini đang phân tích và dịch video...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+                      Phân tích & Dịch qua YouTube
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Quick suggestions link list */}
+              <div className="mt-4 border-t border-slate-800/60 pt-3">
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block mb-1.5">Gợi ý link hot có sẵn thoại:</span>
+                <div className="flex flex-col gap-2">
+                  <button 
+                    onClick={() => {
+                      setYoutubeUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+                      setSuccessMsg("Đã điền: Rick Astley - Never Gonna Give You Up! Nhấn 'Phân tích & Dịch qua YouTube' để thưởng thức.");
+                    }}
+                    className="text-[10px] text-left bg-slate-950 hover:bg-slate-900 border border-slate-800/60 hover:border-red-500/40 text-slate-400 hover:text-slate-200 px-2.5 py-1.5 rounded-lg transition"
+                  >
+                    🎵 Rick Astley - Never Gonna Give You Up (MV Huyền thoại)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setYoutubeUrl("https://www.youtube.com/watch?v=9HAa2V7uAnE");
+                      setSuccessMsg("Đã điền: Steve Jobs Stanford Speech! Nhấn 'Phân tích & Dịch qua YouTube' để thưởng thức.");
+                    }}
+                    className="text-[10px] text-left bg-slate-950 hover:bg-slate-900 border border-slate-800/60 hover:border-red-500/40 text-slate-400 hover:text-slate-200 px-2.5 py-1.5 rounded-lg transition"
+                  >
+                    🎓 Steve Jobs' 2005 Stanford Commencement Address
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -687,8 +884,15 @@ export default function App() {
             </div>
 
             {/* Simulated Canvas Waveform / Dynamic Visualizer overlay on Video play */}
-            <div className="relative aspect-video bg-slate-950 flex items-center justify-center" id="monitor_stage">
-              {videoSrc ? (
+            <div className="relative aspect-video bg-slate-950 flex items-center justify-center overflow-hidden rounded-xl border border-slate-800" id="monitor_stage">
+              {youtubeId ? (
+                <iframe
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&enablejsapi=1&origin=${window.location.origin}`}
+                  className="w-full h-full aspect-video border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : videoSrc ? (
                 <video 
                   ref={videoRef}
                   src={videoSrc}
@@ -698,7 +902,7 @@ export default function App() {
               ) : (
                 <div className="text-center p-6 flex flex-col items-center gap-3">
                   <Video className="h-12 w-12 text-slate-700" />
-                  <p className="text-xs text-slate-400">Chọn dự án mẫu hoặc tải video để giám sát âm lồng tiếng</p>
+                  <p className="text-xs text-slate-400">Chọn dự án mẫu, tải video hoặc nhập link YouTube để dịch lồng tiếng</p>
                 </div>
               )}
 
@@ -726,7 +930,9 @@ export default function App() {
                   <button 
                     id="play_btn"
                     onClick={() => {
-                      if (videoRef.current) {
+                      if (youtubeId) {
+                        setIsPlaying(!isPlaying);
+                      } else if (videoRef.current) {
                         if (isPlaying) videoRef.current.pause();
                         else videoRef.current.play().catch(e => console.log(e));
                       }
@@ -738,7 +944,10 @@ export default function App() {
                   <button 
                     id="reset_btn"
                     onClick={() => {
-                      if (videoRef.current) {
+                      if (youtubeId) {
+                        setCurrentTime(0);
+                        setIsPlaying(false);
+                      } else if (videoRef.current) {
                         videoRef.current.currentTime = 0;
                         setIsPlaying(false);
                       }

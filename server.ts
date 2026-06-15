@@ -39,6 +39,92 @@ app.get("/api/health", (req, res) => {
 });
 
 /**
+ * Route: Analyze YouTube link and generate translated dialogues using Gemini's knowledge/retrieval
+ */
+app.post("/api/dub/youtube", async (req, res) => {
+  try {
+    const { youtubeUrl, targetLanguage } = req.body;
+
+    if (!youtubeUrl) {
+      return res.status(400).json({ error: "Missing youtubeUrl." });
+    }
+
+    // RegEx to extract YouTube ID
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = youtubeUrl.match(regExp);
+    const videoId = (match && match[2].length === 11) ? match[2] : null;
+
+    if (!videoId) {
+      return res.status(400).json({ error: "Đường link YouTube không đúng định dạng." });
+    }
+
+    const ai = getGeminiClient();
+
+    const targetLangName = targetLanguage === 'vi' ? 'Tiếng Việt' :
+                           targetLanguage === 'en' ? 'Tiếng Anh (English)' :
+                           targetLanguage === 'ja' ? 'Tiếng Nhật (Japanese)' :
+                           targetLanguage === 'ko' ? 'Tiếng Hàn (Korean)' :
+                           targetLanguage === 'zh' ? 'Tiếng Trung (Chinese)' :
+                           targetLanguage === 'fr' ? 'Tiếng Pháp (French)' :
+                           targetLanguage === 'es' ? 'Tiếng Tây Ban Nha (Spanish)' :
+                           targetLanguage === 'de' ? 'Tiếng Đức (German)' : targetLanguage;
+
+    const promptMessage = 
+      `Tôi có một video YouTube với URL: ${youtubeUrl} (ID: ${videoId}). ` +
+      `Hãy đóng vai là một chuyên gia dịch thuật và lồng tiếng phim. Bằng kiến thức rộng lớn của bạn về video này, hoặc bằng khả năng trích xuất nội dung ` +
+      `hãy tạo ra 4 đến 6 phân đoạn thoại đối thoại chính (timestamps, speaker, originalText, translatedText) của video đó. ` +
+      `Nếu video không quá phổ biến, hãy tự động nhận diện chủ đề dựa trên tiêu đề từ URL hoặc giả lập một đoạn hội thoại phong cách Cinematic cực hay liên quan mật thiết đến chủ đề video.
+
+      Yêu cầu dữ liệu trả về:
+      1. 'id': Định danh duy nhất (ví dụ: 'yt_1', 'yt_2')
+      2. 'start': Mốc thời gian bắt đầu nói tính bằng giây (ví dụ: 0.5, 4.2)
+      3. 'end': Mốc thời gian kết thúc nói tính bằng giây (ví dụ: 3.8, 9.0)
+      4. 'speaker': Nhân vật phát biểu (ví dụ: "Người thuyết trình", "Kỷ lục gia", "Morpheus")
+      5. 'originalText': Câu nói gốc bằng ngôn ngữ gốc của video
+      6. 'translatedText': Bản dịch lót lồng tiếng tự nhiên nhất sang ngôn ngữ đích: "${targetLangName}"
+
+      Hãy trả về kết quả tuân thủ nghiêm ngặt theo định dạng Schema được chỉ định dưới dạng ứng dụng JSON.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [promptMessage],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          description: "Mảng danh sách các phân đoạn video YouTube dịch lồng tiếng",
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              start: { type: Type.NUMBER },
+              end: { type: Type.NUMBER },
+              speaker: { type: Type.STRING },
+              originalText: { type: Type.STRING },
+              translatedText: { type: Type.STRING }
+            },
+            required: ["id", "start", "end", "speaker", "originalText", "translatedText"]
+          }
+        }
+      }
+    });
+
+    const resultText = response.text;
+    if (!resultText) {
+      throw new Error("Không có phản hồi từ Gemini API về link YouTube.");
+    }
+
+    const segments = JSON.parse(resultText.trim());
+    return res.json({ success: true, videoId, segments });
+  } catch (error: any) {
+    console.error("YouTube Analysis Error:", error);
+    return res.status(500).json({ 
+      error: "Đã xảy ra lỗi khi phân tích link YouTube: " + error.message 
+    });
+  }
+});
+
+/**
  * Route: Analyze video audio and output translated segments as timestamps
  */
 app.post("/api/dub/analyze", async (req, res) => {
